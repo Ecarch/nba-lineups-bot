@@ -102,6 +102,15 @@ async function postToDiscord(event, teams, minsToTip, threadSuffix = "") {
       body: JSON.stringify(body),
     });
     if (res.ok) return;
+    if (res.status === 400 && body.thread_name) {
+      const err = await res.json().catch(() => ({}));
+      if (/thread/i.test(err.message ?? "")) {
+        // canal de texto normal (no foro): se publica sin crear post
+        delete body.thread_name;
+        continue;
+      }
+      throw new Error(`Discord webhook 400: ${JSON.stringify(err)}`);
+    }
     if (res.status === 429) {
       const { retry_after = 1 } = await res.json().catch(() => ({}));
       await new Promise((r) => setTimeout(r, retry_after * 1000));

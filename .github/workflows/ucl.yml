@@ -27,7 +27,7 @@ jobs:
       - name: Vigilar partidos de hoy
         run: node spike/lineup-spike.mjs --league ucl ${{ inputs.test && '--test' || '' }}
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.UCL_WEBHOOK_URL }}
       - name: Guardar log de la medición
         if: always()
         uses: actions/upload-artifact@v4
