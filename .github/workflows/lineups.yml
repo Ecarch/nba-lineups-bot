@@ -4,7 +4,12 @@ on:
   schedule:
     # 21:17 UTC todos los días (minuto "raro" para evitar los retrasos de GitHub en la hora en punto)
     - cron: "17 21 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Solo publicar un mensaje de ejemplo"
+        type: boolean
+        default: false
 
 concurrency:
   group: nba-lineups
@@ -20,7 +25,7 @@ jobs:
         with:
           node-version: 22
       - name: Vigilar partidos de hoy
-        run: node spike/lineup-spike.mjs
+        run: node spike/lineup-spike.mjs ${{ inputs.test && '--test' || '' }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       - name: Guardar log de la medición
