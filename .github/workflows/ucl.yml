@@ -1,0 +1,39 @@
+name: Champions League lineups (prueba)
+
+on:
+  schedule:
+    # martes y miércoles, 15:17 UTC (los partidos empiezan a las 16:45 y 19:00 UTC)
+    - cron: "17 15 * * 2,3"
+  workflow_dispatch:
+    inputs:
+      test:
+        description: "Solo publicar un mensaje de ejemplo"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ucl-lineups
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vigilar partidos de hoy
+        run: node spike/lineup-spike.mjs --league ucl ${{ inputs.test && '--test' || '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Guardar log de la medición
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ucl-log-${{ github.run_id }}
+          path: |
+            spike/log-*.csv
+            spike/state-*.json
+          if-no-files-found: ignore

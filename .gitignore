@@ -1,4 +1,4 @@
 .env
-spike/state.json
-spike/log.csv
+spike/state*.json
+spike/log*.csv
 node_modules/

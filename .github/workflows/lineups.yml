@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: 22
       - name: Vigilar partidos de hoy
-        run: node spike/lineup-spike.mjs ${{ inputs.test && '--test' || '' }}
+        run: node spike/lineup-spike.mjs --league nba ${{ inputs.test && '--test' || '' }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       - name: Guardar log de la medición
@@ -34,6 +34,6 @@ jobs:
         with:
           name: lineup-log-${{ github.run_id }}
           path: |
-            spike/log.csv
-            spike/state.json
+            spike/log-*.csv
+            spike/state-*.json
           if-no-files-found: ignore

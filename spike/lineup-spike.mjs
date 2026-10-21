@@ -1,18 +1,30 @@
 // PRUEBA DESECHABLE (spike): publica los titulares de cada partido NBA en un canal
 // de Discord en cuanto ESPN los muestra, y mide cuántos minutos antes del inicio llegan.
 // No es el bot final. Uso:
-//   node lineup-spike.mjs          -> vigila los partidos de hoy
-//   node lineup-spike.mjs --test   -> publica un ejemplo con un partido ya jugado
+//   node lineup-spike.mjs [--league nba|ucl]          -> vigila los partidos de hoy
+//   node lineup-spike.mjs [--league nba|ucl] --test   -> publica un ejemplo con un partido ya jugado
 // Requiere DISCORD_WEBHOOK_URL en spike/.env o como variable de entorno.
 
 import { readFileSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+const LEAGUES = {
+  nba: { path: "basketball/nba", emoji: "🏀", color: 0x1d428a, starters: 5, name: "NBA" },
+  ucl: { path: "soccer/uefa.champions", emoji: "⚽", color: 0x0b1e5b, starters: 11, name: "Champions League" },
+};
+const leagueArg = process.argv[process.argv.indexOf("--league") + 1];
+const LEAGUE_KEY = process.argv.includes("--league") ? leagueArg : "nba";
+const LEAGUE = LEAGUES[LEAGUE_KEY];
+if (!LEAGUE) {
+  console.error(`Liga desconocida: ${leagueArg}. Opciones: ${Object.keys(LEAGUES).join(", ")}`);
+  process.exit(1);
+}
+
 const DIR = dirname(fileURLToPath(import.meta.url));
-const STATE_FILE = join(DIR, "state.json");
-const LOG_FILE = join(DIR, "log.csv");
-const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
+const STATE_FILE = join(DIR, `state-${LEAGUE_KEY}.json`);
+const LOG_FILE = join(DIR, `log-${LEAGUE_KEY}.csv`);
+const ESPN = `https://site.api.espn.com/apis/site/v2/sports/${LEAGUE.path}`;
 
 const POLL_MS = 60_000;
 const WATCH_FROM_MIN = 90; // empezar a vigilar 90 min antes del inicio
@@ -34,6 +46,17 @@ async function getJson(url) {
 }
 
 function extractStarters(summary) {
+  // fútbol: rosters[].roster[] con formación y dorsal
+  if (summary.rosters?.length) {
+    return summary.rosters.map((r) => ({
+      name: r.formation ? `${r.team.displayName} (${r.formation})` : r.team.displayName,
+      abbr: r.team.abbreviation,
+      starters: (r.roster ?? [])
+        .filter((p) => p.starter)
+        .map((p) => ({ name: `${p.jersey ?? ""} ${p.athlete.displayName}`.trim(), pos: p.position?.abbreviation ?? "" })),
+    }));
+  }
+  // NBA: boxscore.players[].statistics[0].athletes[]
   const teams = [];
   for (const t of summary.boxscore?.players ?? []) {
     const athletes = t.statistics?.[0]?.athletes ?? [];
@@ -53,18 +76,18 @@ async function postToDiscord(event, teams, minsToTip, threadSuffix = "") {
       ? `detectado ${Math.round(minsToTip)} min antes del inicio`
       : `detectado ${Math.round(-minsToTip)} min DESPUÉS del inicio`;
   const body = {
-    username: "NBA Lineups",
+    username: `${LEAGUE.name} Lineups`,
     // el canal es un foro: cada mensaje crea un post nuevo con este título
-    thread_name: `🏀 ${event.shortName} · ${day}${threadSuffix}`,
+    thread_name: `${LEAGUE.emoji} ${event.shortName} · ${day}${threadSuffix}`,
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: `🏀 Alineación titular: ${event.shortName}`,
-        description: `Inicio: <t:${tipUnix}:t> (<t:${tipUnix}:R>)`,
-        color: 0x1d428a,
+        title: `${LEAGUE.emoji} Alineación titular: ${event.name ?? event.shortName}`,
+        description: `${LEAGUE.name} · Inicio: <t:${tipUnix}:t> (<t:${tipUnix}:R>)`,
+        color: LEAGUE.color,
         fields: teams.map((t) => ({
           name: t.name,
-          value: t.starters.map((s) => `\`${s.pos.padEnd(2)}\` ${s.name}`).join("\n") || "—",
+          value: t.starters.map((s) => `\`${s.pos.padEnd(4)}\` ${s.name}`).join("\n") || "—",
           inline: true,
         })),
         footer: { text: `Fuente: ESPN · ${when} · versión de prueba` },
@@ -128,7 +151,7 @@ async function tick(state) {
     const counts = teams.map((t) => t.starters.length).join("/") || "0";
     log([new Date().toISOString(), event.id, event.shortName, minsToTip.toFixed(1),
       event.status.type.name, counts, Object.keys(summary).join("|")]);
-    if (teams.length === 2 && teams.every((t) => t.starters.length >= 5)) {
+    if (teams.length === 2 && teams.every((t) => t.starters.length >= LEAGUE.starters)) {
       await postToDiscord(event, teams, minsToTip);
       state[event.id] = { game: event.shortName, result: "publicado", minsToTip, at: new Date().toISOString() };
       console.log(`[${event.shortName}] titulares publicados, ${minsToTip.toFixed(1)} min antes del inicio`);
