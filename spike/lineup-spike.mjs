@@ -45,6 +45,48 @@ async function getJson(url) {
   return res.json();
 }
 
+// NBA: ESPN no publica titulares antes del inicio, así que se leen de RotoWire.
+// Solo cuentan los quintetos marcados como "Confirmed".
+const ROTOWIRE_URL = "https://www.rotowire.com/basketball/nba-lineups.php";
+const BROWSER_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36";
+
+function parseRotowireTeam(html) {
+  const confirmed = /lineup__status is-confirmed/.test(html);
+  const starters = [...html.matchAll(/<div class="lineup__pos"\s*>([^<]*)<\/div>\s*<a title="([^"]+)"/g)]
+    .slice(0, 5)
+    .map((m) => ({ pos: m[1].trim(), name: m[2] }));
+  return { confirmed, starters };
+}
+
+async function fetchRotowire() {
+  const res = await fetch(ROTOWIRE_URL, { headers: { "User-Agent": BROWSER_UA } });
+  if (!res.ok) throw new Error(`RotoWire ${res.status}`);
+  const html = await res.text();
+  const teams = new Map(); // nickname -> { confirmed, starters }
+  for (const block of html.split('<div class="lineup is-nba"').slice(1)) {
+    const nicks = [...block.matchAll(/lineup__mteam is-(visit|home)[^>]*>\s*([^<]+?)\s*<span/g)];
+    const visit = block.indexOf("lineup__list is-visit");
+    const home = block.indexOf("lineup__list is-home");
+    if (nicks.length < 2 || visit < 0 || home < 0) continue;
+    teams.set(nicks[0][2], parseRotowireTeam(block.slice(visit, home)));
+    teams.set(nicks[1][2], parseRotowireTeam(block.slice(home)));
+  }
+  return teams;
+}
+
+function rotowireStarters(event, rw) {
+  const competitors = [...event.competitions[0].competitors].sort((a, b) => (a.homeAway === "away" ? 0 : 1) - (b.homeAway === "away" ? 0 : 1));
+  return competitors.map((c) => {
+    const t = rw.get(c.team.shortDisplayName);
+    return {
+      name: c.team.displayName,
+      abbr: c.team.abbreviation,
+      starters: t?.confirmed ? t.starters : [],
+    };
+  });
+}
+
 function extractStarters(summary) {
   // fútbol: rosters[].roster[] con formación y dorsal
   if (summary.rosters?.length) {
@@ -68,7 +110,7 @@ function extractStarters(summary) {
   return teams;
 }
 
-async function postToDiscord(event, teams, minsToTip, threadSuffix = "") {
+async function postToDiscord(event, teams, minsToTip, threadSuffix = "", source = "ESPN") {
   const tipUnix = Math.floor(new Date(event.date).getTime() / 1000);
   const day = new Date(event.date).toLocaleDateString("es", { day: "2-digit", month: "2-digit", timeZone: "America/New_York" });
   const when =
@@ -90,7 +132,7 @@ async function postToDiscord(event, teams, minsToTip, threadSuffix = "") {
           value: t.starters.map((s) => `\`${s.pos.padEnd(4)}\` ${s.name}`).join("\n") || "—",
           inline: true,
         })),
-        footer: { text: `Fuente: ESPN · ${when} · versión de prueba` },
+        footer: { text: `Fuente: ${source} · ${when} · versión de prueba` },
         timestamp: new Date().toISOString(),
       },
     ],
@@ -141,6 +183,8 @@ async function runTest() {
 
 async function tick(state) {
   const board = await getJson(`${ESPN}/scoreboard`);
+  const useRotowire = LEAGUE_KEY === "nba";
+  let rotowire = null;
   let pending = 0;
   for (const event of board.events) {
     if (state[event.id]) continue;
@@ -155,13 +199,21 @@ async function tick(state) {
       continue;
     }
     pending++;
-    const summary = await getJson(`${ESPN}/summary?event=${event.id}`);
-    const teams = extractStarters(summary);
+    let teams;
+    let source;
+    if (useRotowire) {
+      rotowire ??= await fetchRotowire();
+      teams = rotowireStarters(event, rotowire);
+      source = "RotoWire (confirmada)";
+    } else {
+      teams = extractStarters(await getJson(`${ESPN}/summary?event=${event.id}`));
+      source = "ESPN";
+    }
     const counts = teams.map((t) => t.starters.length).join("/") || "0";
     log([new Date().toISOString(), event.id, event.shortName, minsToTip.toFixed(1),
-      event.status.type.name, counts, Object.keys(summary).join("|")]);
+      event.status.type.name, counts, source]);
     if (teams.length === 2 && teams.every((t) => t.starters.length >= LEAGUE.starters)) {
-      await postToDiscord(event, teams, minsToTip);
+      await postToDiscord(event, teams, minsToTip, "", source);
       state[event.id] = { game: event.shortName, result: "publicado", minsToTip, at: new Date().toISOString() };
       console.log(`[${event.shortName}] titulares publicados, ${minsToTip.toFixed(1)} min antes del inicio`);
     } else {
