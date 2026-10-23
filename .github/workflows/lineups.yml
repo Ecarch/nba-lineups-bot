@@ -2,8 +2,12 @@ name: NBA lineups (prueba)
 
 on:
   schedule:
-    # 21:17 UTC todos los días (minuto "raro" para evitar los retrasos de GitHub en la hora en punto)
-    - cron: "17 21 * * *"
+    # GitHub retrasa las tareas programadas hasta ~3 h, así que se lanzan varias al día.
+    # Solo una corre a la vez (concurrency) y comparten lo ya publicado vía caché.
+    - cron: "17 13 * * *"
+    - cron: "17 16 * * *"
+    - cron: "17 19 * * *"
+    - cron: "17 22 * * *"
   workflow_dispatch:
     inputs:
       test:
@@ -18,16 +22,31 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 355
+    timeout-minutes: 358
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Día de juego (hora de Nueva York)
+        run: echo "GAME_DAY=$(TZ=America/New_York date +%F)" >> "$GITHUB_ENV"
+      - name: Recuperar partidos ya publicados hoy
+        uses: actions/cache/restore@v4
+        with:
+          path: spike/state-nba.json
+          key: nba-state-${{ env.GAME_DAY }}-${{ github.run_id }}
+          restore-keys: nba-state-${{ env.GAME_DAY }}-
       - name: Vigilar partidos de hoy
+        timeout-minutes: 345
         run: node spike/lineup-spike.mjs --league nba ${{ inputs.test && '--test' || '' }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      - name: Guardar partidos publicados
+        if: always() && !inputs.test
+        uses: actions/cache/save@v4
+        with:
+          path: spike/state-nba.json
+          key: nba-state-${{ env.GAME_DAY }}-${{ github.run_id }}
       - name: Guardar log de la medición
         if: always()
         uses: actions/upload-artifact@v4
